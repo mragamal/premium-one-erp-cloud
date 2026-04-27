@@ -12,9 +12,6 @@ from db import init_db
 from i18n import get_lang
 from layout import render_page
 
-# 🔥 NEW API IMPORT
-
-
 init_db()
 
 app = FastAPI(title="Premium One ERP")
@@ -30,7 +27,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 session_signer = TimestampSigner("premium-one-erp-session-key")
 
 
-# 🔥 MODULE DETECTION
 def module_for_path(path: str):
     path = path or ""
     rules = [
@@ -49,7 +45,6 @@ def module_for_path(path: str):
     return None
 
 
-# 🔐 SESSION HANDLING
 def hydrate_session_from_cookie(request: Request):
     if request.scope.get("session"):
         return
@@ -60,22 +55,23 @@ def hydrate_session_from_cookie(request: Request):
         return
 
     try:
-        data = session_signer.unsign(raw_cookie.encode("utf-8"), max_age=14 * 24 * 60 * 60)
+        data = session_signer.unsign(
+            raw_cookie.encode("utf-8"),
+            max_age=14 * 24 * 60 * 60,
+        )
         request.scope["session"] = json.loads(b64decode(data))
     except (BadSignature, ValueError, TypeError):
         request.scope["session"] = {}
 
 
-# 🔥 AUTH MIDDLEWARE (UPDATED)
 @app.middleware("http")
 async def auth_guard(request: Request, call_next):
     path = request.url.path or ""
 
-    # ✅ IMPORTANT: Allow API without login (temporary for testing)
     if path.startswith("/api"):
         return await call_next(request)
 
-    open_paths = ["/login", "/logout", "/static", "/favicon.ico"]
+    open_paths = ["/login", "/logout", "/static", "/favicon.ico", "/test"]
 
     if any(path.startswith(prefix) for prefix in open_paths):
         return await call_next(request)
@@ -93,7 +89,57 @@ async def auth_guard(request: Request, call_next):
     return await call_next(request)
 
 
-# 🔥 BASIC ROUTES
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    content = """
+    <div class="card" style="max-width:420px;margin:60px auto;">
+        <h2 style="margin-bottom:10px;">Premium One ERP</h2>
+        <p style="color:#6d809c;margin-bottom:20px;">Sign in to continue</p>
+
+        <form method="post" action="/login">
+            <div class="form-group">
+                <label>Username</label>
+                <input name="username" placeholder="Enter username" required>
+            </div>
+
+            <div class="form-group" style="margin-top:12px;">
+                <label>Password</label>
+                <input name="password" type="password" placeholder="Enter password" required>
+            </div>
+
+            <div class="form-actions" style="margin-top:20px;">
+                <button class="btn blue" type="submit" style="width:100%;">Login</button>
+            </div>
+        </form>
+    </div>
+    """
+    return HTMLResponse(render_page("Login", content, "en", current_path="/login"))
+
+
+@app.post("/login")
+async def login_submit(request: Request):
+    form = await request.form()
+    username = form.get("username")
+    password = form.get("password")
+
+    # TEMP LOGIN for Render testing
+    # بعدين نربطه بجدول users
+    if username and password:
+        request.session["user"] = {
+            "username": username,
+            "role": "admin",
+        }
+        return RedirectResponse("/ui/accounting", status_code=302)
+
+    return RedirectResponse("/login", status_code=302)
+
+
+@app.get("/logout")
+def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=302)
+
+
 @app.get("/")
 def root(request: Request):
     return RedirectResponse(default_home_path_for_user(request), status_code=302)
@@ -104,17 +150,11 @@ def ui_root(request: Request):
     return RedirectResponse(default_home_path_for_user(request), status_code=302)
 
 
-# 🔥 TEST PAGE
 @app.get("/test", response_class=HTMLResponse)
 def test():
     return "<h2>System Running 🚀</h2>"
 
 
-# =========================
-# 🔥 INCLUDE ROUTERS
-# =========================
-
-# 🧠 CORE MODULES
 from modules.accounting.accounts import router as accounts_router
 from modules.accounting.config import router as config_router
 from modules.accounting.customer_invoices import router as customer_invoices_router
@@ -123,7 +163,7 @@ from modules.accounting.partners import router as partners_router
 from modules.accounting.setup import router as setup_router
 from modules.accounting.vendor_bills import router as vendor_bills_router
 
-# 🔥 INCLUDE CORE
+
 app.include_router(accounts_router)
 app.include_router(setup_router)
 app.include_router(config_router)
@@ -131,5 +171,3 @@ app.include_router(partners_router)
 app.include_router(customer_invoices_router)
 app.include_router(vendor_bills_router)
 app.include_router(journal_router)
-
-# 🔥 INCLUDE NEW API
