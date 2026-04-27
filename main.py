@@ -13,7 +13,7 @@ from i18n import get_lang
 from layout import render_page
 
 # 🔥 NEW API IMPORT
-from modules.api.customers_api import router as customers_api_router
+
 
 init_db()
 
@@ -133,4 +133,3 @@ app.include_router(vendor_bills_router)
 app.include_router(journal_router)
 
 # 🔥 INCLUDE NEW API
-app.include_router(customers_api_router)
