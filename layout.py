@@ -40,7 +40,10 @@ def _sidebar_menu_items(request, current_path=""):
 
     html = []
     for module_code, href, icon, label in items:
-        visible = True if request is None else can(request, module_code, "view")
+        try:
+            visible = True if request is None else can(request, module_code, "view")
+        except Exception:
+            visible = True
         if not visible:
             continue
         
@@ -96,9 +99,6 @@ def render_page(title, content, lang="en", current_path=""):
         <title>{title}</title>
         <link rel="manifest" href="/static/manifest.json">
         <meta name="theme-color" content="#052861">
-        <meta name="apple-mobile-web-app-capable" content="yes">
-        <meta name="apple-mobile-web-app-status-bar-style" content="default">
-        <meta name="apple-mobile-web-app-title" content="Premium One ERP">
         <link rel="apple-touch-icon" href="/static/logo6.png">
         <style>
             * {{
@@ -1710,14 +1710,10 @@ def render_page(title, content, lang="en", current_path=""):
                 }});
             }});
         </script>
-        <script>
-            if ('serviceWorker' in navigator) {{
-                window.addEventListener('load', function() {{
-                    navigator.serviceWorker.register('/static/sw.js').catch(function(err) {{
-                        console.log('Service Worker registration failed:', err);
-                    }});
-                }});
-            }}
+            <script>
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.register('/static/sw.js').catch(function() {});
+            }
         </script>
     </body>
     </html>

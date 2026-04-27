@@ -1,5 +1,4 @@
 import json
-import os
 from base64 import b64decode
 
 from fastapi import FastAPI, Request
@@ -18,9 +17,11 @@ init_db()
 app = FastAPI(title="Premium One ERP")
 app.add_middleware(
     SessionMiddleware,
-    secret_key=os.environ.get("SESSION_SECRET", "premium-one-erp-session-key"),
+    secret_key="premium-one-erp-session-key-change-later",
+    session_cookie="erp_session",
     same_site="lax",
-    https_only=bool(os.environ.get("RENDER") or os.environ.get("RENDER_EXTERNAL_URL")),
+    https_only=False,
+    max_age=14 * 24 * 60 * 60,
 )
 app.mount("/static", StaticFiles(directory="static"), name="static")
 session_signer = TimestampSigner("premium-one-erp-session-key")
@@ -55,6 +56,110 @@ def module_for_path(path: str):
     return None
 
 
+
+def session_logged_in(request: Request) -> bool:
+    """Render-safe session check. Do not use manual cookie decoding."""
+    try:
+        return bool(request.session.get("logged_in") or request.session.get("user") or request.session.get("user_id"))
+    except AssertionError:
+        return False
+
+
+def set_demo_login_session(request: Request, username: str):
+    """Temporary login for deployment testing. Replace later with real users table validation."""
+    request.session.clear()
+    request.session["logged_in"] = True
+    request.session["user_id"] = 1
+    request.session["username"] = username
+    request.session["role"] = "admin"
+    request.session["is_admin"] = True
+    request.session["user"] = {
+        "id": 1,
+        "username": username,
+        "name": username,
+        "role": "admin",
+        "is_admin": True,
+    }
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    if session_logged_in(request):
+        return RedirectResponse("/ui/accounting", status_code=302)
+
+    return HTMLResponse("""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Login - Premium One ERP</title>
+        <link rel="manifest" href="/static/manifest.json">
+        <meta name="theme-color" content="#052861">
+        <style>
+            * { box-sizing: border-box; font-family: Arial, sans-serif; }
+            body {
+                margin: 0;
+                min-height: 100vh;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: radial-gradient(circle at 20% 10%, rgba(32,211,243,.22), transparent 28%), linear-gradient(135deg, #052861, #0a3a8f 52%, #041f4d);
+            }
+            .login-card {
+                width: min(420px, calc(100% - 32px));
+                background: rgba(255,255,255,.98);
+                border: 1px solid rgba(223,230,241,.92);
+                border-radius: 24px;
+                padding: 32px;
+                box-shadow: 0 28px 70px rgba(0,0,0,.25);
+            }
+            .logo { text-align: center; margin-bottom: 18px; }
+            .logo img { max-width: 180px; height: auto; }
+            h1 { margin: 0 0 8px 0; color: #13315c; font-size: 28px; }
+            p { margin: 0 0 24px 0; color: #6d809c; }
+            label { display: block; margin: 12px 0 6px; font-weight: 700; color: #244267; }
+            input { width: 100%; padding: 13px 14px; border: 1px solid #d5deea; border-radius: 12px; font-size: 15px; }
+            button { width: 100%; margin-top: 18px; padding: 13px 16px; border: 0; border-radius: 12px; background: #2a67ea; color: white; font-weight: 800; cursor: pointer; font-size: 15px; }
+            .note { margin-top: 14px; font-size: 13px; color: #6d809c; line-height: 1.5; }
+        </style>
+    </head>
+    <body>
+        <div class="login-card">
+            <div class="logo"><img src="/static/logo6.png" alt="Premium One ERP"></div>
+            <h1>Premium One ERP</h1>
+            <p>Sign in to continue</p>
+            <form method="post" action="/login">
+                <label>Username</label>
+                <input name="username" placeholder="Enter username" required autofocus>
+                <label>Password</label>
+                <input name="password" type="password" placeholder="Enter password" required>
+                <button type="submit">Login</button>
+            </form>
+            <div class="note">Temporary Render login: use any username and password.</div>
+        </div>
+    </body>
+    </html>
+    """)
+
+
+@app.post("/login")
+async def login_submit(request: Request):
+    form = await request.form()
+    username = str(form.get("username") or "admin").strip()
+    password = str(form.get("password") or "").strip()
+    if username and password:
+        set_demo_login_session(request, username)
+        return RedirectResponse("/ui/accounting", status_code=303)
+    return RedirectResponse("/login", status_code=303)
+
+
+@app.get("/logout")
+def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=302)
+
+
 def hydrate_session_from_cookie(request: Request):
     if request.scope.get("session"):
         return
@@ -69,20 +174,6 @@ def hydrate_session_from_cookie(request: Request):
         request.scope["session"] = json.loads(b64decode(data))
     except (BadSignature, ValueError, TypeError):
         request.scope["session"] = {}
-
-
-def _is_session_logged_in(request: Request) -> bool:
-    """Stable login check for Render and local runs."""
-    try:
-        if request.session.get("logged_in"):
-            return True
-        if request.session.get("user_id"):
-            return True
-        if request.session.get("user"):
-            return True
-        return bool(is_logged_in(request))
-    except Exception:
-        return False
 
 
 @app.middleware("http")
@@ -100,16 +191,16 @@ async def auth_guard(request: Request, call_next):
         "/redoc",
     ]
 
-    if path.startswith("/api"):
+    if path.startswith("/api") or any(path.startswith(prefix) for prefix in open_paths):
         return await call_next(request)
 
-    if any(path.startswith(prefix) for prefix in open_paths):
-        return await call_next(request)
-
-    if not _is_session_logged_in(request):
+    if not session_logged_in(request):
         return RedirectResponse("/login", status_code=302)
 
+    # Permissions are temporarily bypassed on Render so the original UI can open.
+    # Re-enable module permission checks later after real users/roles are stable.
     return await call_next(request)
+
 
 
 def dashboard_cards(cards):
@@ -140,106 +231,16 @@ def t(lang: str, en: str, ar: str) -> str:
     return ar if lang == "ar" else en
 
 
-@app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request):
-    error = request.query_params.get("error")
-    error_html = "<div class='error'>Invalid login. Please try again.</div>" if error else ""
-    return HTMLResponse(f"""
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Login - Premium One ERP</title>
-        <link rel="manifest" href="/static/manifest.json">
-        <meta name="theme-color" content="#052861">
-        <style>
-            * {{ box-sizing: border-box; font-family: Arial, sans-serif; }}
-            body {{
-                margin: 0;
-                min-height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                padding: 20px;
-                background:
-                    radial-gradient(circle at 22% 20%, rgba(32, 211, 243, 0.22), transparent 26%),
-                    linear-gradient(135deg, #052861 0%, #0a3a8f 55%, #041f4d 100%);
-            }}
-            .login-card {{
-                width: 100%; max-width: 420px; background: rgba(255,255,255,0.98);
-                border-radius: 22px; padding: 28px; box-shadow: 0 24px 60px rgba(0,0,0,0.25);
-                border: 1px solid rgba(255,255,255,0.22);
-            }}
-            .logo {{ text-align:center; margin-bottom: 18px; }}
-            .logo img {{ width: 210px; max-width: 100%; height: auto; filter: drop-shadow(0 8px 18px rgba(0,0,0,0.18)); }}
-            h1 {{ margin: 0 0 8px 0; color: #13315c; font-size: 24px; text-align:center; }}
-            p {{ margin: 0 0 22px 0; color: #6d809c; text-align:center; }}
-            label {{ display:block; margin-bottom: 7px; color:#3a567d; font-weight:700; font-size:13px; }}
-            input {{ width:100%; padding: 13px 14px; border:1px solid #d5deea; border-radius: 12px; outline:none; font-size:14px; margin-bottom:14px; }}
-            button {{ width:100%; padding: 13px 16px; border:0; border-radius: 12px; background: linear-gradient(135deg, #174cb7 0%, #1d67e2 58%, #1dbbe8 100%); color:white; font-weight:800; cursor:pointer; font-size:15px; box-shadow: 0 12px 22px rgba(14,79,184,0.24); }}
-            .hint {{ margin-top:14px; font-size:12px; color:#6d809c; text-align:center; }}
-            .error {{ background:#fdecec; color:#b42318; border:1px solid #f6c7c4; padding:10px 12px; border-radius:12px; margin-bottom:14px; font-weight:700; }}
-        </style>
-    </head>
-    <body>
-        <form class="login-card" method="post" action="/login">
-            <div class="logo"><img src="/static/logo6.png" alt="Premium One ERP"></div>
-            <h1>Premium One ERP</h1>
-            <p>Sign in to continue</p>
-            {error_html}
-            <label>Username</label>
-            <input name="username" placeholder="Enter username" autocomplete="username" required>
-            <label>Password</label>
-            <input name="password" type="password" placeholder="Enter password" autocomplete="current-password" required>
-            <button type="submit">Login</button>
-            <div class="hint">Temporary Render login: any username/password works.</div>
-        </form>
-    </body>
-    </html>
-    """)
-
-
-@app.post("/login")
-async def login_submit(request: Request):
-    form = await request.form()
-    username = str(form.get("username") or "").strip()
-    password = str(form.get("password") or "").strip()
-
-    if not username or not password:
-        return RedirectResponse("/login?error=1", status_code=303)
-
-    request.session.clear()
-    request.session["logged_in"] = True
-    request.session["user_id"] = 1
-    request.session["username"] = username
-    request.session["role"] = "admin"
-    request.session["is_admin"] = True
-    request.session["user"] = {"id": 1, "username": username, "name": username, "role": "admin", "is_admin": True}
-    return RedirectResponse("/ui/accounting", status_code=303)
-
-
-@app.get("/logout")
-def logout(request: Request):
-    request.session.clear()
-    return RedirectResponse("/login", status_code=302)
-
-
-@app.get("/test", response_class=HTMLResponse)
-def test():
-    return "<h2>System Running 🚀</h2>"
-
-
 @app.get("/")
 def root(request: Request):
-    if _is_session_logged_in(request):
+    if session_logged_in(request):
         return RedirectResponse("/ui/accounting", status_code=302)
     return RedirectResponse("/login", status_code=302)
 
 
 @app.get("/ui")
 def ui_root(request: Request):
-    if _is_session_logged_in(request):
+    if session_logged_in(request):
         return RedirectResponse("/ui/accounting", status_code=302)
     return RedirectResponse("/login", status_code=302)
 
