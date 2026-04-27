@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from auth import can, default_home_path_for_user, is_logged_in
+from auth import can, default_home_path_for_user
 from db import init_db
 from layout import render_page
 
@@ -15,13 +15,21 @@ app.add_middleware(
     SessionMiddleware,
     secret_key="premium-one-erp-session-key",
     same_site="lax",
+    https_only=False,
 )
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+def logged_in(request: Request) -> bool:
+    return bool(
+        request.session.get("user")
+        or request.session.get("username")
+        or request.session.get("user_id")
+    )
+
+
 def module_for_path(path: str):
-    path = path or ""
     rules = [
         ("/ui/settings", "system"),
         ("/ui/system/users", "users"),
@@ -53,25 +61,28 @@ async def auth_guard(request: Request, call_next):
         "/redoc",
     ]
 
-    if path.startswith("/api"):
+    if path.startswith("/api") or any(path.startswith(p) for p in open_paths):
         return await call_next(request)
 
-    if any(path.startswith(prefix) for prefix in open_paths):
-        return await call_next(request)
-
-    if not is_logged_in(request):
+    if not logged_in(request):
         return RedirectResponse("/login", status_code=302)
 
     module_code = module_for_path(path)
-
-    if module_code and not can(request, module_code, "view"):
-        return RedirectResponse(default_home_path_for_user(request), status_code=302)
+    if module_code:
+        try:
+            if not can(request, module_code, "view"):
+                return RedirectResponse(default_home_path_for_user(request), status_code=302)
+        except Exception:
+            pass
 
     return await call_next(request)
 
 
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
+    if logged_in(request):
+        return RedirectResponse("/ui/accounting", status_code=302)
+
     content = """
     <div class="card" style="max-width:420px;margin:60px auto;">
         <h2 style="margin-bottom:10px;">Premium One ERP</h2>
@@ -100,18 +111,24 @@ def login_page(request: Request):
 @app.post("/login")
 async def login_submit(request: Request):
     form = await request.form()
-    username = form.get("username")
-    password = form.get("password")
+    username = str(form.get("username") or "").strip()
+    password = str(form.get("password") or "").strip()
 
     if username and password:
         request.session["user"] = {
-            "username": str(username),
+            "id": 1,
+            "username": username,
             "role": "admin",
             "is_admin": True,
         }
-        return RedirectResponse("/ui/accounting", status_code=302)
+        request.session["user_id"] = 1
+        request.session["username"] = username
+        request.session["role"] = "admin"
+        request.session["is_admin"] = True
 
-    return RedirectResponse("/login", status_code=302)
+        return RedirectResponse("/ui/accounting", status_code=303)
+
+    return RedirectResponse("/login", status_code=303)
 
 
 @app.get("/logout")
@@ -122,14 +139,14 @@ def logout(request: Request):
 
 @app.get("/")
 def root(request: Request):
-    if is_logged_in(request):
+    if logged_in(request):
         return RedirectResponse("/ui/accounting", status_code=302)
     return RedirectResponse("/login", status_code=302)
 
 
 @app.get("/ui")
 def ui_root(request: Request):
-    if is_logged_in(request):
+    if logged_in(request):
         return RedirectResponse("/ui/accounting", status_code=302)
     return RedirectResponse("/login", status_code=302)
 
