@@ -1,4 +1,6 @@
 fastapi
 uvicorn
+itsdangerous
+starlette
+jinja2
 python-multipart
-openpyxl

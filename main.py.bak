@@ -1,0 +1,172 @@
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+
+from db import init_db
+from layout import render_page
+
+init_db()
+
+app = FastAPI(title="Premium One ERP")
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+def dashboard_cards(cards):
+    html = '<div class="card-grid">'
+    for title, href, icon, desc in cards:
+        html += f'''
+        <a href="{href}" class="module-card">
+            <div class="module-card-icon">{icon}</div>
+            <div class="module-card-title">{title}</div>
+            <div class="module-card-sub">{desc}</div>
+        </a>
+        '''
+    html += "</div>"
+    return html
+
+
+def card_section(title, cards):
+    return f'''
+    <div class="card">
+        <h3 class="sub-title">{title}</h3>
+        {dashboard_cards(cards)}
+    </div>
+    '''
+
+
+@app.get("/")
+def root():
+    return RedirectResponse("/ui/accounting", status_code=302)
+
+
+@app.get("/ui")
+def ui_root():
+    return RedirectResponse("/ui/accounting", status_code=302)
+
+
+@app.get("/ui/accounting", response_class=HTMLResponse)
+def accounting_root():
+    main_cards = [
+        ("System Setup", "/ui/accounting/setup", "⚙️", "Company and system initialization"),
+        ("Configuration", "/ui/accounting/config", "🧩", "Default accounts and prefixes"),
+        ("Chart of Accounts", "/ui/accounting/accounts", "📘", "Manage account structure"),
+        ("Customers", "/ui/accounting/customers-hub", "👤", "Customer master and transactions"),
+        ("Vendors", "/ui/accounting/vendors-hub", "🏪", "Vendor master and transactions"),
+        ("Journal", "/ui/accounting/journal", "📔", "Journal entries and review"),
+        ("Petty Cash", "/ui/accounting/petty-cash", "💰", "Custody and returns"),
+        ("Fixed Assets", "/ui/accounting/fixed-assets", "🏢", "Assets, depreciation, and disposal"),
+        ("Reports", "/ui/accounting/reports", "📊", "Financial and operational reports"),
+    ]
+    content = card_section("Accounting", main_cards)
+    return HTMLResponse(render_page("Accounting", content, current_path="/ui/accounting"))
+
+
+@app.get("/ui/accounting/customers-hub", response_class=HTMLResponse)
+def customers_hub():
+    cards = [
+        ("Customers", "/ui/accounting/customers", "👤", "Customer master data"),
+        ("Customer Invoices", "/ui/accounting/customer-invoices", "📄", "Sales invoices"),
+    ]
+    content = card_section("Customers", cards)
+    return HTMLResponse(render_page("Customers", content, current_path="/ui/accounting/customers-hub"))
+
+
+@app.get("/ui/accounting/vendors-hub", response_class=HTMLResponse)
+def vendors_hub():
+    cards = [
+        ("Vendors", "/ui/accounting/vendors", "🏪", "Vendor master data"),
+        ("Vendor Bills", "/ui/accounting/vendor-bills", "🧾", "Purchase bills"),
+    ]
+    content = card_section("Vendors", cards)
+    return HTMLResponse(render_page("Vendors", content, current_path="/ui/accounting/vendors-hub"))
+
+
+@app.get("/ui/hr", response_class=HTMLResponse)
+def hr_root():
+    hr_cards = [("Employees", "/ui/hr/employees", "👤", "Employee master data")]
+    content = card_section("HR", hr_cards)
+    return HTMLResponse(render_page("HR", content, current_path="/ui/hr"))
+
+
+@app.get("/ui/inventory", response_class=HTMLResponse)
+def inventory_root():
+    inventory_cards = [("Goods Receipts", "/ui/inventory/goods-receipts", "📦", "Receiving and stock intake")]
+    content = card_section("Inventory", inventory_cards)
+    return HTMLResponse(render_page("Inventory", content, current_path="/ui/inventory"))
+
+
+@app.get("/ui/purchasing", response_class=HTMLResponse)
+def purchasing_root():
+    purchasing_cards = [("Purchase Orders", "/ui/purchasing/purchase-orders", "🛒", "Purchase orders and follow-up")]
+    content = card_section("Purchasing", purchasing_cards)
+    return HTMLResponse(render_page("Purchasing", content, current_path="/ui/purchasing"))
+
+
+from modules.accounting.setup import router as setup_router
+from modules.accounting.config import router as config_router
+from modules.accounting.accounts import router as accounts_router
+from modules.accounting.partners import router as partners_router
+from modules.accounting.customer_invoices import router as customer_invoices_router
+from modules.accounting.vendor_bills import router as vendor_bills_router
+from modules.accounting.journal import router as journal_router
+from modules.accounting.fixed_assets import router as fixed_assets_router
+
+try:
+    from modules.accounting.fixed_asset_statement import router as fixed_asset_statement_router
+except Exception:
+    fixed_asset_statement_router = None
+
+try:
+    from modules.accounting.cost_centers import router as cost_centers_router
+except Exception:
+    cost_centers_router = None
+
+try:
+    from modules.accounting.reports import router as reports_router
+except Exception:
+    reports_router = None
+
+try:
+    from modules.accounting.petty_cash import router as petty_cash_router
+except Exception:
+    petty_cash_router = None
+
+try:
+    from modules.accounting.petty_cash_list import router as petty_cash_list_router
+except Exception:
+    petty_cash_list_router = None
+
+try:
+    from modules.accounting.petty_cash_statement import router as petty_cash_statement_router
+except Exception:
+    petty_cash_statement_router = None
+
+try:
+    from modules.hr.employees import router as employees_router
+except Exception:
+    employees_router = None
+
+
+app.include_router(accounts_router, prefix="/ui/accounting")
+app.include_router(setup_router)
+app.include_router(config_router)
+app.include_router(partners_router)
+app.include_router(customer_invoices_router)
+app.include_router(vendor_bills_router)
+app.include_router(journal_router)
+app.include_router(fixed_assets_router)
+
+if fixed_asset_statement_router:
+    app.include_router(fixed_asset_statement_router)
+if cost_centers_router:
+    app.include_router(cost_centers_router)
+if reports_router:
+    app.include_router(reports_router)
+if petty_cash_router:
+    app.include_router(petty_cash_router)
+if petty_cash_list_router:
+    app.include_router(petty_cash_list_router)
+if petty_cash_statement_router:
+    app.include_router(petty_cash_statement_router)
+if employees_router:
+    app.include_router(employees_router)
