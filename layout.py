@@ -4,8 +4,7 @@ from pathlib import Path
 from auth import can
 
 
-_I18N_PATH = Path(__file__).resolve().parent / "static" / "js" / "i18n.js"
-_I18N_JS_VERSION = str(int(_I18N_PATH.stat().st_mtime_ns)) if _I18N_PATH.exists() else "1"
+_I18N_JS_VERSION = str(int(Path(r"D:\Premium One Erp\static\js\i18n.js").stat().st_mtime_ns))
 
 
 def _request_from_stack():
@@ -97,9 +96,6 @@ def render_page(title, content, lang="en", current_path=""):
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>{title}</title>
-        <link rel="manifest" href="/static/manifest.json">
-        <meta name="theme-color" content="#052861">
-        <link rel="apple-touch-icon" href="/static/logo6.png">
         <style>
             * {{
                 margin: 0;
@@ -1709,11 +1705,6 @@ def render_page(title, content, lang="en", current_path=""):
                     }}
                 }});
             }});
-        </script>
-            <script>
-            if ('serviceWorker' in navigator) {
-                navigator.serviceWorker.register('/static/sw.js').catch(function() {});
-            }
         </script>
     </body>
     </html>

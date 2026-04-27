@@ -1,13 +1,9 @@
-import json
-from base64 import b64decode
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from itsdangerous import BadSignature, TimestampSigner
 from starlette.middleware.sessions import SessionMiddleware
 
-from auth import can, default_home_path_for_user, is_logged_in
 from db import init_db
 from i18n import get_lang
 from layout import render_page
@@ -18,13 +14,12 @@ app = FastAPI(title="Premium One ERP")
 app.add_middleware(
     SessionMiddleware,
     secret_key="premium-one-erp-session-key-change-later",
-    session_cookie="erp_session",
+    session_cookie="premium_one_session",
     same_site="lax",
     https_only=False,
     max_age=14 * 24 * 60 * 60,
 )
 app.mount("/static", StaticFiles(directory="static"), name="static")
-session_signer = TimestampSigner("premium-one-erp-session-key")
 
 
 def module_for_path(path: str):
@@ -56,110 +51,6 @@ def module_for_path(path: str):
     return None
 
 
-
-def session_logged_in(request: Request) -> bool:
-    """Render-safe session check. Do not use manual cookie decoding."""
-    try:
-        return bool(request.session.get("logged_in") or request.session.get("user") or request.session.get("user_id"))
-    except AssertionError:
-        return False
-
-
-def set_demo_login_session(request: Request, username: str):
-    """Temporary login for deployment testing. Replace later with real users table validation."""
-    request.session.clear()
-    request.session["logged_in"] = True
-    request.session["user_id"] = 1
-    request.session["username"] = username
-    request.session["role"] = "admin"
-    request.session["is_admin"] = True
-    request.session["user"] = {
-        "id": 1,
-        "username": username,
-        "name": username,
-        "role": "admin",
-        "is_admin": True,
-    }
-
-
-@app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request):
-    if session_logged_in(request):
-        return RedirectResponse("/ui/accounting", status_code=302)
-
-    return HTMLResponse("""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Login - Premium One ERP</title>
-        <link rel="manifest" href="/static/manifest.json">
-        <meta name="theme-color" content="#052861">
-        <style>
-            * { box-sizing: border-box; font-family: Arial, sans-serif; }
-            body {
-                margin: 0;
-                min-height: 100vh;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                background: radial-gradient(circle at 20% 10%, rgba(32,211,243,.22), transparent 28%), linear-gradient(135deg, #052861, #0a3a8f 52%, #041f4d);
-            }
-            .login-card {
-                width: min(420px, calc(100% - 32px));
-                background: rgba(255,255,255,.98);
-                border: 1px solid rgba(223,230,241,.92);
-                border-radius: 24px;
-                padding: 32px;
-                box-shadow: 0 28px 70px rgba(0,0,0,.25);
-            }
-            .logo { text-align: center; margin-bottom: 18px; }
-            .logo img { max-width: 180px; height: auto; }
-            h1 { margin: 0 0 8px 0; color: #13315c; font-size: 28px; }
-            p { margin: 0 0 24px 0; color: #6d809c; }
-            label { display: block; margin: 12px 0 6px; font-weight: 700; color: #244267; }
-            input { width: 100%; padding: 13px 14px; border: 1px solid #d5deea; border-radius: 12px; font-size: 15px; }
-            button { width: 100%; margin-top: 18px; padding: 13px 16px; border: 0; border-radius: 12px; background: #2a67ea; color: white; font-weight: 800; cursor: pointer; font-size: 15px; }
-            .note { margin-top: 14px; font-size: 13px; color: #6d809c; line-height: 1.5; }
-        </style>
-    </head>
-    <body>
-        <div class="login-card">
-            <div class="logo"><img src="/static/logo6.png" alt="Premium One ERP"></div>
-            <h1>Premium One ERP</h1>
-            <p>Sign in to continue</p>
-            <form method="post" action="/login">
-                <label>Username</label>
-                <input name="username" placeholder="Enter username" required autofocus>
-                <label>Password</label>
-                <input name="password" type="password" placeholder="Enter password" required>
-                <button type="submit">Login</button>
-            </form>
-            <div class="note">Temporary Render login: use any username and password.</div>
-        </div>
-    </body>
-    </html>
-    """)
-
-
-@app.post("/login")
-async def login_submit(request: Request):
-    form = await request.form()
-    username = str(form.get("username") or "admin").strip()
-    password = str(form.get("password") or "").strip()
-    if username and password:
-        set_demo_login_session(request, username)
-        return RedirectResponse("/ui/accounting", status_code=303)
-    return RedirectResponse("/login", status_code=303)
-
-
-@app.get("/logout")
-def logout(request: Request):
-    request.session.clear()
-    return RedirectResponse("/login", status_code=302)
-
-
 def hydrate_session_from_cookie(request: Request):
     if request.scope.get("session"):
         return
@@ -179,28 +70,20 @@ def hydrate_session_from_cookie(request: Request):
 @app.middleware("http")
 async def auth_guard(request: Request, call_next):
     path = request.url.path or ""
-
-    open_paths = [
-        "/login",
-        "/logout",
-        "/static",
-        "/favicon.ico",
-        "/test",
-        "/docs",
-        "/openapi.json",
-        "/redoc",
-    ]
-
-    if path.startswith("/api") or any(path.startswith(prefix) for prefix in open_paths):
+    open_paths = ["/login", "/logout", "/static", "/favicon.ico"]
+    if any(path.startswith(prefix) for prefix in open_paths):
         return await call_next(request)
 
-    if not session_logged_in(request):
+    hydrate_session_from_cookie(request)
+
+    if not is_logged_in(request):
         return RedirectResponse("/login", status_code=302)
 
-    # Permissions are temporarily bypassed on Render so the original UI can open.
-    # Re-enable module permission checks later after real users/roles are stable.
-    return await call_next(request)
+    module_code = module_for_path(path)
+    if module_code and not can(request, module_code, "view"):
+        return RedirectResponse(default_home_path_for_user(request), status_code=302)
 
+    return await call_next(request)
 
 
 def dashboard_cards(cards):
@@ -233,16 +116,12 @@ def t(lang: str, en: str, ar: str) -> str:
 
 @app.get("/")
 def root(request: Request):
-    if session_logged_in(request):
-        return RedirectResponse("/ui/accounting", status_code=302)
-    return RedirectResponse("/login", status_code=302)
+    return RedirectResponse(default_home_path_for_user(request), status_code=302)
 
 
 @app.get("/ui")
 def ui_root(request: Request):
-    if session_logged_in(request):
-        return RedirectResponse("/ui/accounting", status_code=302)
-    return RedirectResponse("/login", status_code=302)
+    return RedirectResponse(default_home_path_for_user(request), status_code=302)
 
 
 @app.get("/ui/settings", response_class=HTMLResponse)
