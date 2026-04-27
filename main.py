@@ -1,15 +1,10 @@
-import json
-from base64 import b64decode
-
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from itsdangerous import BadSignature, TimestampSigner
 from starlette.middleware.sessions import SessionMiddleware
 
 from auth import can, default_home_path_for_user, is_logged_in
 from db import init_db
-from i18n import get_lang
 from layout import render_page
 
 init_db()
@@ -23,8 +18,6 @@ app.add_middleware(
 )
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-session_signer = TimestampSigner("premium-one-erp-session-key")
 
 
 def module_for_path(path: str):
@@ -45,38 +38,26 @@ def module_for_path(path: str):
     return None
 
 
-def hydrate_session_from_cookie(request: Request):
-    if request.scope.get("session"):
-        return
-
-    raw_cookie = request.cookies.get("session")
-    if not raw_cookie:
-        request.scope["session"] = {}
-        return
-
-    try:
-        data = session_signer.unsign(
-            raw_cookie.encode("utf-8"),
-            max_age=14 * 24 * 60 * 60,
-        )
-        request.scope["session"] = json.loads(b64decode(data))
-    except (BadSignature, ValueError, TypeError):
-        request.scope["session"] = {}
-
-
 @app.middleware("http")
 async def auth_guard(request: Request, call_next):
     path = request.url.path or ""
 
+    open_paths = [
+        "/login",
+        "/logout",
+        "/static",
+        "/favicon.ico",
+        "/test",
+        "/docs",
+        "/openapi.json",
+        "/redoc",
+    ]
+
     if path.startswith("/api"):
         return await call_next(request)
 
-    open_paths = ["/login", "/logout", "/static", "/favicon.ico", "/test"]
-
     if any(path.startswith(prefix) for prefix in open_paths):
         return await call_next(request)
-
-    hydrate_session_from_cookie(request)
 
     if not is_logged_in(request):
         return RedirectResponse("/login", status_code=302)
@@ -122,12 +103,11 @@ async def login_submit(request: Request):
     username = form.get("username")
     password = form.get("password")
 
-    # TEMP LOGIN for Render testing
-    # بعدين نربطه بجدول users
     if username and password:
         request.session["user"] = {
-            "username": username,
+            "username": str(username),
             "role": "admin",
+            "is_admin": True,
         }
         return RedirectResponse("/ui/accounting", status_code=302)
 
@@ -142,12 +122,16 @@ def logout(request: Request):
 
 @app.get("/")
 def root(request: Request):
-    return RedirectResponse(default_home_path_for_user(request), status_code=302)
+    if is_logged_in(request):
+        return RedirectResponse("/ui/accounting", status_code=302)
+    return RedirectResponse("/login", status_code=302)
 
 
 @app.get("/ui")
 def ui_root(request: Request):
-    return RedirectResponse(default_home_path_for_user(request), status_code=302)
+    if is_logged_in(request):
+        return RedirectResponse("/ui/accounting", status_code=302)
+    return RedirectResponse("/login", status_code=302)
 
 
 @app.get("/test", response_class=HTMLResponse)
